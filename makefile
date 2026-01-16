@@ -1,10 +1,17 @@
 ASM=nasm
+CC=gcc
 SRC_DIR=src
 BUILD_DIR=build
+TOOLS_DIR=tools
 
 TARGET_IMG=main_floppy.img
 
-.PHONY: all floppy_image kernel bootloader clean always
+.PHONY: all floppy_image kernel bootloader clean always tools
+
+#
+# All
+#
+all: floppy_image tools
 
 #
 # Floppy Image
@@ -16,6 +23,7 @@ $(BUILD_DIR)/$(TARGET_IMG): bootloader kernel
 	mkfs.fat -F 12 -n "NYXOS" $(BUILD_DIR)/$(TARGET_IMG)
 	dd if=$(BUILD_DIR)/bootloader.bin of=$(BUILD_DIR)/$(TARGET_IMG) conv=notrunc
 	mcopy -i $(BUILD_DIR)/$(TARGET_IMG) $(BUILD_DIR)/kernel.bin "::kernel.bin"
+	mcopy -i $(BUILD_DIR)/$(TARGET_IMG) test.txt "::test.txt"
 
 #
 # bootloader
@@ -32,6 +40,15 @@ kernel: $(BUILD_DIR)/kernel.bin
 
 $(BUILD_DIR)/kernel.bin: always $(SRC_DIR)/kernel/main.asm
 	$(ASM) $(SRC_DIR)/kernel/main.asm -f bin -o $(BUILD_DIR)/kernel.bin
+
+#
+# Tools
+#
+tools: $(BUILD_DIR)/tools/fat
+$(BUILD_DIR)/tools/fat: always $(TOOLS_DIR)/fat/fat12.c
+	mkdir -p $(BUILD_DIR)/tools
+	$(CC) -g -o $(BUILD_DIR)/tools/fat $(TOOLS_DIR)/fat/fat12.c
+
 
 always:
 	mkdir -p $(BUILD_DIR)
