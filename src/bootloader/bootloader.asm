@@ -6,7 +6,7 @@ bits 16
 ;
 ; FAT12 Header
 ;
-jmp short _start
+jmp short main
 nop
 
 bpb_oem:                    db 'MSWIN4.1'   ; 8 bytes
@@ -30,8 +30,150 @@ ebr_volume_id:              db 12h, 34h, 56h, 78h
 ebr_volume_label:           db 'NYX OS     '    ; 11 Bytes
 ebr_system_id:              db 'FAT12   '       ; 8 Bytes
 
-_start:
-    jmp main
+main:
+    ; setup data segments
+    mov ax, 0
+    mov ds, ax
+    mov es, ax
+    ; setup stack
+    mov ss, ax
+    mov sp, 0x7C00
+    
+    ; make sure BIOS has started at 0000:7C00 instead of 07C0:0000
+    push es
+    push word .after
+    retf
+.after:
+
+    ; BIOS sets the drive number in DL register
+    mov [ebr_drive_number], dl
+    
+    ; Print the loading message
+    mov si, msg_loading
+    call puts
+
+    ; read drive parameters(sectorsPerTrack and head count)
+    push es
+    mov ah, 08h
+    int 13h
+    jc floppy_error
+    pop es
+
+    and cl, 0x3f
+    xor ch, ch
+    mov [bpb_sectors_per_track], cx
+    inc dh
+    mov [bpb_heads], dh
+
+    ; compute root directory offset
+    mov ax, [bpb_sectors_per_fat]       ; lba of root directory = reserved + fats * sectors_per_fat
+    mov bl, [bpb_fat_count]
+    xor bh, bh
+    mul bx
+    add ax, [bpb_reserved_sectors]      ; ax = lba
+    push ax
+    ; compute root dir size
+    mov ax, [bpb_dir_entries_count]     
+    shl ax, 5                           ; ax *= 32
+    xor dx, dx
+    div word [bpb_bytes_per_sector]
+    test dx, dx                         ; If we have a partial sector, we should increase sector count
+    jz .root_dir_after
+    inc ax
+.root_dir_after:
+    ;  Read Root directory
+    mov cl, al                          ; Number of sectors to read = size of root dir
+    pop ax                              ; lba of root dir
+    mov dl, [ebr_drive_number]
+    mov bx, buffer                      ; es:bx = destination address
+    call disk_read
+
+    ; Search for kernel.bin
+    xor bx, bx
+    mov di, buffer
+
+.search_kernel:
+    mov si, file_kernel_bin
+    mov cx, 11                      ; compare 11 characters
+    push di
+    repe cmpsb
+    pop di
+    je .found_kernel
+
+    add di, 32
+    inc bx
+    cmp bx, [bpb_dir_entries_count]
+    jl .search_kernel
+    
+    ; Kernel was not found
+    jmp kernel_not_found
+
+.found_kernel:
+    ; Read the clusters of the kernel file
+    ; di points to the address of the directory entry
+    ; cluster address is at an offset of 26 bytes from the start of the entry
+    mov ax, [di + 26]
+    mov [kernel_cluster], ax
+
+    ; load FAT from disk
+    mov ax, [bpb_reserved_sectors]
+    mov bx, buffer
+    mov cl, [bpb_sectors_per_fat]
+    mov dl, [ebr_drive_number]
+    call disk_read
+
+    ; address space 0x7E00 ~ 0x7FFFF ( = 480.5 KiB) is non-reserved onventional memory
+    mov bx, KERNEL_LOAD_SEGMENT
+    mov es, bx
+    mov bx, KERNEL_LOAD_OFFSET
+.load_kernel_loop:
+    ; read next cluster
+    mov ax, [kernel_cluster]
+    add ax, 31
+    mov cl, 1
+    mov dl, [ebr_drive_number]
+    call disk_read
+    add bx, [bpb_bytes_per_sector]
+    
+    ; Compute next location
+    mov ax, [kernel_cluster]
+    mov cx, 3
+    mul cx
+    mov cx, 2
+    div cx                          ; ax = index of entry in FAT, dx = cluster mod 2
+
+    mov si, buffer
+    add si, ax
+    mov ax, [ds:si]
+
+    or dx, dx
+    jz .even
+
+.odd:
+    shr ax, 4
+    jmp .next_cluster
+
+.even:
+    and ax, 0x0FFF
+
+.next_cluster:
+    cmp ax, 0x0FF8                  ; Check for end of chain
+    jae .read_finished
+
+    mov [kernel_cluster], ax
+    jmp .load_kernel_loop
+
+.read_finished:
+    ; Jump to kernel
+    mov dl, [ebr_drive_number]
+    mov ax, KERNEL_LOAD_SEGMENT
+    mov ds, ax
+    mov es, ax
+
+    jmp KERNEL_LOAD_SEGMENT:KERNEL_LOAD_OFFSET
+    
+    ; Halt the system
+    jmp wait_key_and_reboot
 
 ; Prints a character to the screen
 ; Params:
@@ -55,27 +197,6 @@ puts:
     pop ax
     pop si
     ret
-
-main:
-    ; setup data segments
-    mov ax, 0
-    mov ds, ax
-    mov es, ax
-    ; setup stack
-    mov ss, ax
-    mov sp, 0x7C00
-    ; BIOS sets the drive number in DL register
-    mov [ebr_drive_number], dl
-
-    mov ax, 1           ; LBA=1, 2nd sector
-    mov cl, 1           ; read 1 sector
-    mov bx, 0x7E00      ; destination address
-    call disk_read
-
-    mov si, msg_hello
-    call puts
-
-    jmp halt
 
 ;
 ; Disk Routines
@@ -175,6 +296,11 @@ floppy_error:
     call puts
     jmp wait_key_and_reboot
 
+kernel_not_found:
+    mov si, msg_kernel_not_found
+    call puts
+    jmp wait_key_and_reboot
+    
 wait_key_and_reboot:
     mov ah, 0
     int 16h
@@ -185,8 +311,16 @@ halt:
     cli     ; Disable interrupts
     hlt
 
-msg_hello           db "Hello, World!", ENDL, 0
-msg_read_failed     db "Read from disk failed!", ENDL, 0
+msg_loading             db "Loading...", ENDL, 0
+msg_read_failed         db "Read from disk failed!", ENDL, 0
+msg_kernel_not_found    db "KERNEL.BIN file not found!", ENDL, 0
+file_kernel_bin         db "KERNEL  BIN"
+kernel_cluster          dw 0
+
+KERNEL_LOAD_SEGMENT     equ 0x2000
+KERNEL_LOAD_OFFSET      equ 0
 
 times 510-($-$$) db 0
 dw 0AA55h
+
+buffer:

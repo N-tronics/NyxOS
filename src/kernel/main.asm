@@ -1,10 +1,13 @@
-org 0x7C00
+org 0x0
 bits 16
 
 %define ENDL 0x0D, 0x0A
 
-_start:
-    jmp main
+main:
+    mov si, hw_msg
+    call puts
+    
+    jmp halt
 
 ; Prints a character to the screen
 ; Params:
@@ -29,24 +32,8 @@ puts:
     pop si
     ret
 
-main:
-    ; setup data segments
-    mov ax, 0
-    mov ds, ax
-    mov es, ax
-    ; setup stack
-    mov ss, ax
-    mov sp, 0x7C00
-
-    mov si, hw_msg
-    call puts
-
+halt:
+    cli
     hlt
 
-.halt:
-    jmp .halt
-
 hw_msg db "Hello, World!", ENDL, 0
-
-times 510-($-$$) db 0
-dw 0AA55h
