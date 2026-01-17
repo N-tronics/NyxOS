@@ -1,5 +1,7 @@
-; BIOS loads the first 512 Bytes of the disk into memory at address
-; 0x7C00
+; Main job of this stage of the bootloader is to search for the 
+; ext_boot.bin file in the floppy disk and load the extended bootloader
+
+; BIOS loads the first 512 Bytes of the disk into memory at address 0x7C00
 org 0x7C00
 ; At boot, CPU is in 16 bit real mode
 bits 16
@@ -94,13 +96,13 @@ main:
     mov bx, buffer                      ; es:bx = destination address
     call disk_read
 
-    ; Search for kernel.bin
+    ; Search for ext_boot.bin
     ; bx holds the number of entries searched so far
     xor bx, bx
     mov di, buffer
 
-.search_kernel:
-    mov si, file_kernel_bin
+.search_ext_boot:
+    mov si, file_ext_boot_bin
     mov cx, 11                      ; compare 11 characters
     push di
     ; Compare strings at ds:si and es:di
@@ -108,24 +110,24 @@ main:
     ; cmpsb instruction automatically sets the equal flag if strings are equal
     repe cmpsb
     pop di
-    je .found_kernel
+    je .found_ext_boot
     
-    ; If we haven't found the kernel, we go to the next entry by moving 32 bytes further
+    ; If we haven't found the ext_boot, we go to the next entry by moving 32 bytes further
     add di, 32
     ; increment bx and check if we have searched all root directory entries
     inc bx
     cmp bx, [bpb_dir_entries_count]
-    jl .search_kernel
+    jl .search_ext_boot
     
-    ; Kernel was not found
-    jmp kernel_not_found
+    ; ext_boot was not found
+    jmp ext_boot_not_found
 
-.found_kernel:
-    ; Read the clusters of the kernel file
+.found_ext_boot:
+    ; Read the clusters of the ext_boot file
     ; di points to the address of the directory entry
     ; cluster address is at an offset of 26 bytes from the start of the entry
     mov ax, [di + 26]
-    mov [kernel_cluster], ax
+    mov [ext_boot_cluster], ax
 
     ; load FAT from disk
     mov ax, [bpb_reserved_sectors]
@@ -135,22 +137,22 @@ main:
     call disk_read
 
     ; address space 0x7E00 ~ 0x7FFFF ( = 480.5 KiB) is non-reserved onventional memory
-    mov bx, KERNEL_LOAD_SEGMENT
+    mov bx, EXT_BOOT_LOAD_SEGMENT
     mov es, bx
-    mov bx, KERNEL_LOAD_OFFSET
-.load_kernel_loop:
+    mov bx, EXT_BOOT_LOAD_OFFSET
+.load_ext_boot_loop:
     ; read next cluster
-    mov ax, [kernel_cluster]
+    mov ax, [ext_boot_cluster]
     ; TODO: Fix hard coded 31 value
     add ax, 31
     mov cl, 1
     mov dl, [ebr_drive_number]
     call disk_read
-    ; TODO: bx can overflow if the kernel file is too large
+    ; TODO: bx can overflow if the ext_boot file is too large
     add bx, [bpb_bytes_per_sector]
     
     ; Compute next location
-    mov ax, [kernel_cluster]
+    mov ax, [ext_boot_cluster]
     mov cx, 3
     mul cx
     mov cx, 2
@@ -174,17 +176,17 @@ main:
     cmp ax, 0x0FF8                  ; Check for end of chain
     jae .read_finished
 
-    mov [kernel_cluster], ax
-    jmp .load_kernel_loop
+    mov [ext_boot_cluster], ax
+    jmp .load_ext_boot_loop
 
 .read_finished:
-    ; Jump to kernel
+    ; Jump to ext_boot
     mov dl, [ebr_drive_number]
-    mov ax, KERNEL_LOAD_SEGMENT
+    mov ax, EXT_BOOT_LOAD_SEGMENT
     mov ds, ax
     mov es, ax
 
-    jmp KERNEL_LOAD_SEGMENT:KERNEL_LOAD_OFFSET
+    jmp EXT_BOOT_LOAD_SEGMENT:EXT_BOOT_LOAD_OFFSET
     
     ; Halt the system
     ; This should not execute
@@ -311,8 +313,8 @@ floppy_error:
     call puts
     jmp wait_key_and_reboot
 
-kernel_not_found:
-    mov si, msg_kernel_not_found
+ext_boot_not_found:
+    mov si, msg_ext_boot_not_found
     call puts
     jmp wait_key_and_reboot
     
@@ -326,15 +328,15 @@ halt:
     cli     ; Disable interrupts
     hlt
 
-msg_loading             db "Loading...", ENDL, 0
-msg_read_failed         db "Read from disk failed!", ENDL, 0
-msg_kernel_not_found    db "KERNEL.BIN file not found!", ENDL, 0
-file_kernel_bin         db "KERNEL  BIN"
-; Stores the current cluster of the kernel file
-kernel_cluster          dw 0
+msg_loading               db "Loading...", ENDL, 0
+msg_read_failed           db "Read from disk failed!", ENDL, 0
+msg_ext_boot_not_found    db "EXT_BOOT.BIN file not found!", ENDL, 0
+file_ext_boot_bin         db "EXT_BOOTBIN"
+; Stores the current cluster of the ext_boot file
+ext_boot_cluster          dw 0
 
-KERNEL_LOAD_SEGMENT     equ 0x2000
-KERNEL_LOAD_OFFSET      equ 0
+EXT_BOOT_LOAD_SEGMENT     equ 0x2000
+EXT_BOOT_LOAD_OFFSET      equ 0
 
 ; Ensure that the boot sector is 512 bytes
 times 510-($-$$) db 0
