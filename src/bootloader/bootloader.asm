@@ -1,4 +1,7 @@
+; BIOS loads the first 512 Bytes of the disk into memory at address
+; 0x7C00
 org 0x7C00
+; At boot, CPU is in 16 bit real mode
 bits 16
 
 %define ENDL 0x0D, 0x0A
@@ -6,6 +9,9 @@ bits 16
 ;
 ; FAT12 Header
 ;
+
+; FAT12 Specifications and header
+; First instruction is to jump to main segment
 jmp short main
 nop
 
@@ -89,6 +95,7 @@ main:
     call disk_read
 
     ; Search for kernel.bin
+    ; bx holds the number of entries searched so far
     xor bx, bx
     mov di, buffer
 
@@ -96,11 +103,16 @@ main:
     mov si, file_kernel_bin
     mov cx, 11                      ; compare 11 characters
     push di
+    ; Compare strings at ds:si and es:di
+    ; cmpsb comapres cx bytes from each string
+    ; cmpsb instruction automatically sets the equal flag if strings are equal
     repe cmpsb
     pop di
     je .found_kernel
-
+    
+    ; If we haven't found the kernel, we go to the next entry by moving 32 bytes further
     add di, 32
+    ; increment bx and check if we have searched all root directory entries
     inc bx
     cmp bx, [bpb_dir_entries_count]
     jl .search_kernel
@@ -129,10 +141,12 @@ main:
 .load_kernel_loop:
     ; read next cluster
     mov ax, [kernel_cluster]
+    ; TODO: Fix hard coded 31 value
     add ax, 31
     mov cl, 1
     mov dl, [ebr_drive_number]
     call disk_read
+    ; TODO: bx can overflow if the kernel file is too large
     add bx, [bpb_bytes_per_sector]
     
     ; Compute next location
@@ -173,6 +187,7 @@ main:
     jmp KERNEL_LOAD_SEGMENT:KERNEL_LOAD_OFFSET
     
     ; Halt the system
+    ; This should not execute
     jmp wait_key_and_reboot
 
 ; Prints a character to the screen
@@ -315,12 +330,17 @@ msg_loading             db "Loading...", ENDL, 0
 msg_read_failed         db "Read from disk failed!", ENDL, 0
 msg_kernel_not_found    db "KERNEL.BIN file not found!", ENDL, 0
 file_kernel_bin         db "KERNEL  BIN"
+; Stores the current cluster of the kernel file
 kernel_cluster          dw 0
 
 KERNEL_LOAD_SEGMENT     equ 0x2000
 KERNEL_LOAD_OFFSET      equ 0
 
+; Ensure that the boot sector is 512 bytes
 times 510-($-$$) db 0
+; Boot signature
 dw 0AA55h
 
+; Extra space at the end of the boot sector to store intermediate data
+; such as root directory entires and the FAT
 buffer:
