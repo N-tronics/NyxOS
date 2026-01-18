@@ -1,9 +1,10 @@
 PROJ_DIR?=.
 ASM?=nasm
 BUILD_DIR?=build
-override BUILD_DIR:=$(BUILD_DIR)/ext_boot
+override BUILD_DIR:=$(BUILD_DIR)/stdlib
 CC16?=$(PROJ_DIR)/tools/bin/wcc
 LD16?=$(PROJ_DIR)/tools/bin/wlink
+LIBM?=$(PROJ_DIR)/tools/bin/wlib
 CFLAGS16?=-4 -d3 -s -wx -ms -zl -zq
 ASMFLAGS?=-f obj
 
@@ -12,19 +13,14 @@ SRCS_ASM=$(wildcard *.asm)
 OBJS_C=$(patsubst %.c, $(BUILD_DIR)/c/%.obj, $(SRCS_C))
 OBJS_ASM=$(patsubst %.asm, $(BUILD_DIR)/asm/%.obj, $(SRCS_ASM))
 
-.PHONY: all ext_boot always clean 
+.PHONY: all stdlib always clean 
 
-all: ext_boot
+all: stdlib
 
-ext_boot: stdlib $(BUILD_DIR)/ext_boot.bin
+stdlib: $(BUILD_DIR)/stdlib.lib
 
-stdlib: $(BUILD_DIR)/stdlib/stdlib.lib
-
-$(BUILD_DIR)/stdlib/stdlib.lib:
-	$(MAKE) -C stdlib BUILD_DIR=$(BUILD_DIR) ASM=$(ASM) PROJ_DIR=$(PROJ_DIR)
-
-$(BUILD_DIR)/ext_boot.bin: $(OBJS_C) $(OBJS_ASM) 
-	$(LD16) NAME $@ FILE \{ $(OBJS_ASM) $(OBJS_C) $(BUILD_DIR)/stdlib/stdlib.lib \} OPTION MAP=$(BUILD_DIR)/ext_boot.map @linker.lnk
+$(BUILD_DIR)/stdlib.lib: $(OBJS_C) $(OBJS_ASM) 
+	$(LIBM) $@ $(addprefix +, $(OBJS_C)) $(addprefix +, $(OBJS_ASM))
 
 $(BUILD_DIR)/c/%.obj: %.c always
 	$(CC16) $(CFLAGS16) -fo=$@ $<
