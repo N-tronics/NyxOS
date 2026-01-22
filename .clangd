@@ -1,0 +1,7 @@
+CompileFlags:
+  Add: [
+    "-fms-extensions",
+    "-fdeclspec",
+    "-Wno-unknown-attributes",
+    "-D_cdecl=__attribute__((cdecl))"
+  ]
